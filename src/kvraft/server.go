@@ -1,7 +1,6 @@
 package kvraft
 
 import (
-	"log"
 	"sync"
 	"sync/atomic"
 
@@ -10,23 +9,26 @@ import (
 	"6.824/raft"
 )
 
-const Debug = false
+type opType string
 
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
+const (
+	getOp    opType = "Get"
+	putOp    opType = "Put"
+	appendOp opType = "Append"
+)
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	ClientId    int64
+	SequenceNum int64
+	Type        opType
+	Key         string
+	Value       string
 }
 
 type KVServer struct {
-	mu      sync.Mutex
 	me      int
 	rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
@@ -35,14 +37,9 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-}
-
-func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
-}
-
-func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	db      sync.Map
+	lastOps sync.Map
+	waitChs sync.Map
 }
 
 //
@@ -95,6 +92,48 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	go kv.receiver()
 
 	return kv
+}
+
+func (kv *KVServer) receiver() {
+	for !kv.killed() {
+		cmd := <-kv.applyCh
+		if cmd.CommandValid {
+			op := cmd.Command.(Op)
+			if op.Type == getOp {
+				val, ok := kv.db.Load(op.Key)
+				if ok {
+					op.Value = val.(string)
+				} else {
+					op.Value = ""
+				}
+			}
+			sequenceNum, _ := kv.lastOps.LoadOrStore(op.ClientId, int64(0))
+			if op.SequenceNum > sequenceNum.(int64) {
+				switch op.Type {
+				case putOp:
+					if op.Value == "" {
+						kv.db.Delete(op.Key)
+					} else {
+						kv.db.Store(op.Key, op.Value)
+					}
+				case appendOp:
+					if op.Value != "" {
+						val, ok := kv.db.Load(op.Key)
+						if ok {
+							kv.db.Store(op.Key, val.(string)+op.Value)
+						} else {
+							kv.db.Store(op.Key, op.Value)
+						}
+					}
+				}
+				kv.lastOps.Store(op.ClientId, op.SequenceNum)
+			}
+			if ch, ok := kv.waitChs.Load(cmd.CommandIndex); ok {
+				ch.(chan Op) <- op
+			}
+		}
+	}
 }
