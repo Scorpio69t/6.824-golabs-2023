@@ -59,7 +59,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	select {
 	case o := <-ch:
 		if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
-			DPrintf("Get key %v kvserver %v clientId %v sequenceNum %v\n", args.Key, kv.me, args.ClientId, args.SequenceNum)
+			DPrintf("Server %v get key %v clientId %v sequenceNum %v index %v\n", kv.me, args.Key, args.ClientId, args.SequenceNum, index)
 			reply.Status = true
 			reply.Value = o.Value
 		}
@@ -95,7 +95,7 @@ func (kv *KVServer) Put(args *PutArgs, reply *PutReply) {
 	select {
 	case o := <-ch:
 		if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
-			DPrintf("Put key %v value %v kvserver %v clientId %v sequenceNum %v\n", args.Key, args.Value, kv.me, args.ClientId, args.SequenceNum)
+			DPrintf("Server %v put key %v value %v clientId %v sequenceNum %v index %v\n", kv.me, args.Key, args.Value, args.ClientId, args.SequenceNum, index)
 			reply.Status = true
 		}
 	case <-time.After(waitTimeout):
@@ -130,7 +130,7 @@ func (kv *KVServer) Append(args *AppendArgs, reply *AppendReply) {
 	select {
 	case o := <-ch:
 		if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
-			DPrintf("Append key %v value %v kvserver %v clientId %v sequenceNum %v\n", args.Key, args.Value, kv.me, args.ClientId, args.SequenceNum)
+			DPrintf("Server %v append key %v value %v clientId %v sequenceNum %v index %v\n", kv.me, args.Key, args.Value, args.ClientId, args.SequenceNum, index)
 			reply.Status = true
 		}
 	case <-time.After(waitTimeout):

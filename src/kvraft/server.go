@@ -1,6 +1,8 @@
 package kvraft
 
 import (
+	"bytes"
+	"log"
 	"sync"
 	"sync/atomic"
 
@@ -40,6 +42,8 @@ type KVServer struct {
 	db      sync.Map
 	lastOps sync.Map
 	waitChs sync.Map
+
+	persister *raft.Persister
 }
 
 //
@@ -87,11 +91,13 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.maxraftstate = maxraftstate
 
 	// You may need initialization code here.
+	kv.persister = persister
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.restore()
 	go kv.receiver()
 
 	return kv
@@ -134,6 +140,59 @@ func (kv *KVServer) receiver() {
 			if ch, ok := kv.waitChs.Load(cmd.CommandIndex); ok {
 				ch.(chan Op) <- op
 			}
+
+			if kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate {
+				kv.rf.Snapshot(cmd.CommandIndex, kv.serialize())
+			}
+		} else if cmd.SnapshotValid {
+			ok := kv.rf.CondInstallSnapshot(cmd.SnapshotTerm, cmd.SnapshotIndex, cmd.Snapshot)
+			if ok {
+				kv.switchTo(cmd.Snapshot)
+			}
 		}
 	}
+}
+
+func (kv *KVServer) serialize() []byte {
+	db := make(map[interface{}]interface{})
+	kv.db.Range(func(k, v interface{}) bool {
+		db[k] = v
+		return true
+	})
+	ops := make(map[interface{}]interface{})
+	kv.lastOps.Range(func(k, v interface{}) bool {
+		ops[k] = v
+		return true
+	})
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(db)
+	e.Encode(ops)
+	return w.Bytes()
+}
+
+func (kv *KVServer) switchTo(snapshot []byte) {
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var db map[interface{}]interface{}
+	var ops map[interface{}]interface{}
+	if d.Decode(&db) != nil || d.Decode(&ops) != nil {
+		log.Fatalln("KVServer: cannot deserialize")
+	}
+	kv.db = sync.Map{}
+	for k, v := range db {
+		kv.db.Store(k, v)
+	}
+	kv.lastOps = sync.Map{}
+	for k, v := range ops {
+		kv.lastOps.Store(k, v)
+	}
+}
+
+func (kv *KVServer) restore() {
+	snapshot := kv.persister.ReadSnapshot()
+	if snapshot == nil || len(snapshot) < 1 {
+		return
+	}
+	kv.switchTo(snapshot)
 }

@@ -51,12 +51,11 @@ func (ck *Clerk) Get(key string) string {
 	id := ck.leaderId
 	for {
 		ok := ck.servers[id].Call("KVServer.Get", &args, &reply)
-		if !ok || !reply.Status {
-			id = rand.Intn(len(ck.servers))
-			continue
+		if ok && reply.Status {
+			ck.leaderId = id
+			break
 		}
-		ck.leaderId = id
-		break
+		id = rand.Intn(len(ck.servers))
 	}
 	ck.nextSequenceNum++
 	return reply.Value
@@ -76,12 +75,11 @@ func (ck *Clerk) Put(key string, value string) {
 	id := ck.leaderId
 	for {
 		ok := ck.servers[id].Call("KVServer.Put", &args, &reply)
-		if !ok || !reply.Status {
-			id = rand.Intn(len(ck.servers))
-			continue
+		if ok && reply.Status {
+			ck.leaderId = id
+			break
 		}
-		ck.leaderId = id
-		break
+		id = rand.Intn(len(ck.servers))
 	}
 	ck.nextSequenceNum++
 }
@@ -100,12 +98,11 @@ func (ck *Clerk) Append(key string, value string) {
 	id := ck.leaderId
 	for {
 		ok := ck.servers[id].Call("KVServer.Append", &args, &reply)
-		if !ok || !reply.Status {
-			id = rand.Intn(len(ck.servers))
-			continue
+		if ok && reply.Status {
+			ck.leaderId = id
+			break
 		}
-		ck.leaderId = id
-		break
+		id = rand.Intn(len(ck.servers))
 	}
 	ck.nextSequenceNum++
 }
