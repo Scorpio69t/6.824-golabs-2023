@@ -31,6 +31,7 @@ type Op struct {
 }
 
 type KVServer struct {
+	mu      sync.Mutex
 	me      int
 	rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
@@ -39,9 +40,9 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	db      sync.Map
-	lastOps sync.Map
-	waitChs sync.Map
+	db               map[string]string
+	lastSequenceNums map[int64]int64
+	waitChs          map[int]chan Op
 
 	persister *raft.Persister
 }
@@ -97,49 +98,38 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.db = make(map[string]string)
+	kv.lastSequenceNums = make(map[int64]int64)
+	kv.waitChs = make(map[int]chan Op)
 	kv.restore()
-	go kv.receiver()
+
+	go kv.reader()
 
 	return kv
 }
 
-func (kv *KVServer) receiver() {
+func (kv *KVServer) reader() {
 	for !kv.killed() {
 		cmd := <-kv.applyCh
 		if cmd.CommandValid {
 			op := cmd.Command.(Op)
-			if op.Type == getOp {
-				val, ok := kv.db.Load(op.Key)
-				if ok {
-					op.Value = val.(string)
-				} else {
-					op.Value = ""
-				}
-			}
-			sequenceNum, _ := kv.lastOps.LoadOrStore(op.ClientId, int64(0))
-			if op.SequenceNum > sequenceNum.(int64) {
+			kv.get(&op)
+
+			kv.mu.Lock()
+			if op.SequenceNum > kv.lastSequenceNums[op.ClientId] {
 				switch op.Type {
 				case putOp:
-					if op.Value == "" {
-						kv.db.Delete(op.Key)
-					} else {
-						kv.db.Store(op.Key, op.Value)
-					}
+					kv.put(&op)
 				case appendOp:
-					if op.Value != "" {
-						val, ok := kv.db.Load(op.Key)
-						if ok {
-							kv.db.Store(op.Key, val.(string)+op.Value)
-						} else {
-							kv.db.Store(op.Key, op.Value)
-						}
-					}
+					kv.append(&op)
 				}
-				kv.lastOps.Store(op.ClientId, op.SequenceNum)
+				kv.lastSequenceNums[op.ClientId] = op.SequenceNum
 			}
-			if ch, ok := kv.waitChs.Load(cmd.CommandIndex); ok {
-				ch.(chan Op) <- op
+
+			if ch, ok := kv.waitChs[cmd.CommandIndex]; ok {
+				ch <- op
 			}
+			kv.mu.Unlock()
 
 			if kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate {
 				kv.rf.Snapshot(cmd.CommandIndex, kv.serialize())
@@ -147,46 +137,32 @@ func (kv *KVServer) receiver() {
 		} else if cmd.SnapshotValid {
 			ok := kv.rf.CondInstallSnapshot(cmd.SnapshotTerm, cmd.SnapshotIndex, cmd.Snapshot)
 			if ok {
+				kv.mu.Lock()
 				kv.switchTo(cmd.Snapshot)
+				kv.mu.Unlock()
 			}
 		}
 	}
 }
 
 func (kv *KVServer) serialize() []byte {
-	db := make(map[interface{}]interface{})
-	kv.db.Range(func(k, v interface{}) bool {
-		db[k] = v
-		return true
-	})
-	ops := make(map[interface{}]interface{})
-	kv.lastOps.Range(func(k, v interface{}) bool {
-		ops[k] = v
-		return true
-	})
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	e.Encode(db)
-	e.Encode(ops)
+	e.Encode(kv.db)
+	e.Encode(kv.lastSequenceNums)
 	return w.Bytes()
 }
 
 func (kv *KVServer) switchTo(snapshot []byte) {
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
-	var db map[interface{}]interface{}
-	var ops map[interface{}]interface{}
-	if d.Decode(&db) != nil || d.Decode(&ops) != nil {
+	var db map[string]string
+	var sequenceNums map[int64]int64
+	if d.Decode(&db) != nil || d.Decode(&sequenceNums) != nil {
 		log.Fatalln("KVServer: cannot deserialize")
 	}
-	kv.db = sync.Map{}
-	for k, v := range db {
-		kv.db.Store(k, v)
-	}
-	kv.lastOps = sync.Map{}
-	for k, v := range ops {
-		kv.lastOps.Store(k, v)
-	}
+	kv.db = db
+	kv.lastSequenceNums = sequenceNums
 }
 
 func (kv *KVServer) restore() {
@@ -195,4 +171,34 @@ func (kv *KVServer) restore() {
 		return
 	}
 	kv.switchTo(snapshot)
+}
+
+func (kv *KVServer) get(op *Op) {
+	if op.Type == getOp {
+		val, ok := kv.db[op.Key]
+		if ok {
+			op.Value = val
+		} else {
+			op.Value = ""
+		}
+	}
+}
+
+func (kv *KVServer) put(op *Op) {
+	if op.Value == "" {
+		delete(kv.db, op.Key)
+	} else {
+		kv.db[op.Key] = op.Value
+	}
+}
+
+func (kv *KVServer) append(op *Op) {
+	if op.Value != "" {
+		val, ok := kv.db[op.Key]
+		if ok {
+			kv.db[op.Key] = val + op.Value
+		} else {
+			kv.db[op.Key] = op.Value
+		}
+	}
 }

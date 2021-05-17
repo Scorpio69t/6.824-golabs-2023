@@ -1,10 +1,11 @@
 package kvraft
 
-import (
-	"time"
-)
+type status int
 
-const waitTimeout = 600 * time.Millisecond
+const (
+	success = iota
+	wrongLeader
+)
 
 type PutArgs struct {
 	ClientId    int64
@@ -14,7 +15,7 @@ type PutArgs struct {
 }
 
 type PutReply struct {
-	Status bool
+	Status status
 }
 
 type AppendArgs struct {
@@ -25,7 +26,7 @@ type AppendArgs struct {
 }
 
 type AppendReply struct {
-	Status bool
+	Status status
 }
 
 type GetArgs struct {
@@ -35,13 +36,14 @@ type GetArgs struct {
 }
 
 type GetReply struct {
-	Status bool
+	Status status
 	Value  string
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	reply.Status = false
+	DPrintf("Client %v wanna get key %v from server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
+	reply.Status = wrongLeader
 
 	op := Op{
 		ClientId:    args.ClientId,
@@ -55,28 +57,32 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 
 	ch := make(chan Op)
-	kv.waitChs.Store(index, ch)
-	select {
-	case o := <-ch:
-		if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
-			DPrintf("Server %v get key %v clientId %v sequenceNum %v index %v\n", kv.me, args.Key, args.ClientId, args.SequenceNum, index)
-			reply.Status = true
-			reply.Value = o.Value
-		}
-	case <-time.After(waitTimeout):
+	kv.mu.Lock()
+	kv.waitChs[index] = ch
+	kv.mu.Unlock()
+	o := <-ch
+	if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
+		DPrintf("Client %v get key %v from server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
+		reply.Status = success
+		reply.Value = o.Value
 	}
-	kv.waitChs.Delete(index)
+	kv.mu.Lock()
+	delete(kv.waitChs, index)
+	kv.mu.Unlock()
+	DPrintf("Client %v fail to get key %v from server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
 }
 
 func (kv *KVServer) Put(args *PutArgs, reply *PutReply) {
 	// Your code here.
-	sequenceNum, ok := kv.lastOps.Load(args.ClientId)
-	if ok && args.SequenceNum == sequenceNum {
-		reply.Status = true
+	kv.mu.Lock()
+	sequenceNum, ok := kv.lastSequenceNums[args.ClientId]
+	kv.mu.Unlock()
+	if ok && args.SequenceNum <= sequenceNum {
+		reply.Status = success
 		return
 	}
-
-	reply.Status = false
+	DPrintf("Client %v wanna put key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
+	reply.Status = wrongLeader
 
 	op := Op{
 		ClientId:    args.ClientId,
@@ -91,27 +97,31 @@ func (kv *KVServer) Put(args *PutArgs, reply *PutReply) {
 	}
 
 	ch := make(chan Op)
-	kv.waitChs.Store(index, ch)
-	select {
-	case o := <-ch:
-		if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
-			DPrintf("Server %v put key %v value %v clientId %v sequenceNum %v index %v\n", kv.me, args.Key, args.Value, args.ClientId, args.SequenceNum, index)
-			reply.Status = true
-		}
-	case <-time.After(waitTimeout):
+	kv.mu.Lock()
+	kv.waitChs[index] = ch
+	kv.mu.Unlock()
+	o := <-ch
+	if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
+		DPrintf("Client %v put key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
+		reply.Status = success
 	}
-	kv.waitChs.Delete(index)
+	kv.mu.Lock()
+	delete(kv.waitChs, index)
+	kv.mu.Unlock()
+	DPrintf("Client %v fail to put key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
 }
 
 func (kv *KVServer) Append(args *AppendArgs, reply *AppendReply) {
 	// Your code here.
-	sequenceNum, ok := kv.lastOps.Load(args.ClientId)
-	if ok && args.SequenceNum == sequenceNum {
-		reply.Status = true
+	kv.mu.Lock()
+	sequenceNum, ok := kv.lastSequenceNums[args.ClientId]
+	kv.mu.Unlock()
+	if ok && args.SequenceNum <= sequenceNum {
+		reply.Status = success
 		return
 	}
-
-	reply.Status = false
+	DPrintf("Client %v wanna append key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
+	reply.Status = wrongLeader
 
 	op := Op{
 		ClientId:    args.ClientId,
@@ -126,14 +136,16 @@ func (kv *KVServer) Append(args *AppendArgs, reply *AppendReply) {
 	}
 
 	ch := make(chan Op)
-	kv.waitChs.Store(index, ch)
-	select {
-	case o := <-ch:
-		if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
-			DPrintf("Server %v append key %v value %v clientId %v sequenceNum %v index %v\n", kv.me, args.Key, args.Value, args.ClientId, args.SequenceNum, index)
-			reply.Status = true
-		}
-	case <-time.After(waitTimeout):
+	kv.mu.Lock()
+	kv.waitChs[index] = ch
+	kv.mu.Unlock()
+	o := <-ch
+	if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
+		DPrintf("Client %v append key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
+		reply.Status = success
 	}
-	kv.waitChs.Delete(index)
+	kv.mu.Lock()
+	delete(kv.waitChs, index)
+	kv.mu.Unlock()
+	DPrintf("Client %v fail to append key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
 }

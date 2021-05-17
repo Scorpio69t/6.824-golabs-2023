@@ -40,9 +40,9 @@ func (rf *Raft) restoreState() {
 	// Example:
 	r := bytes.NewBuffer(state)
 	d := labgob.NewDecoder(r)
-	var currentTerm int
-	var votedFor int
-	var raftLog raftLog
+	currentTerm := 0
+	votedFor := 0
+	raftLog := raftLog{}
 	if d.Decode(&currentTerm) != nil ||
 		d.Decode(&votedFor) != nil ||
 		d.Decode(&raftLog) != nil {

@@ -40,6 +40,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	} else {
 		rf.state = follower
 	}
+
 	rf.setNextElectionTime()
 
 	if args.PrevLogIndex > rf.log.lastLogIndex() || args.PrevLogIndex < rf.log.LastIncludedIndex {
@@ -80,7 +81,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = minInt(args.LeaderCommit, rf.log.lastLogIndex())
-		rf.apply()
 		rf.applyCond.Signal()
 	}
 }
@@ -132,7 +132,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 			}
 			if n != -1 {
 				rf.commitIndex = n
-				rf.apply()
 				rf.applyCond.Signal()
 			}
 		}
@@ -192,16 +191,4 @@ func (rf *Raft) broadcastHeartbeat() {
 
 func (rf *Raft) setNextHeartbeatTime() {
 	rf.nextHeartbeat = time.Now().Add(100 * time.Millisecond)
-}
-
-func (rf *Raft) apply() {
-	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-		m := ApplyMsg{
-			CommandValid: true,
-			Command:      rf.log.at(i).Command,
-			CommandIndex: i,
-		}
-		rf.messages = append(rf.messages, m)
-		rf.lastApplied++
-	}
 }

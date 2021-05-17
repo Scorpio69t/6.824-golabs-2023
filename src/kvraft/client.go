@@ -3,9 +3,12 @@ package kvraft
 import (
 	"math/rand"
 	"sync"
+	"time"
 
 	"6.824/labrpc"
 )
+
+const timeout = 1000 * time.Millisecond
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
@@ -47,18 +50,36 @@ func (ck *Clerk) Get(key string) string {
 		SequenceNum: ck.nextSequenceNum,
 		Key:         key,
 	}
-	reply := GetReply{}
-	id := ck.leaderId
 	for {
-		ok := ck.servers[id].Call("KVServer.Get", &args, &reply)
-		if ok && reply.Status {
-			ck.leaderId = id
-			break
+		i := ck.leaderId
+		for {
+			reply := GetReply{}
+			ok := make(chan bool)
+			err := make(chan bool)
+			go func() {
+				if ck.servers[i].Call("KVServer.Get", &args, &reply) {
+					ok <- true
+				} else {
+					err <- true
+				}
+			}()
+			select {
+			case <-ok:
+				if reply.Status == success {
+					ck.leaderId = i
+					ck.nextSequenceNum++
+					return reply.Value
+				}
+			case <-err:
+			case <-time.After(timeout):
+			}
+			i = (i + 1) % len(ck.servers)
+			if i == ck.leaderId {
+				break
+			}
 		}
-		id = rand.Intn(len(ck.servers))
+		time.Sleep(100 * time.Millisecond)
 	}
-	ck.nextSequenceNum++
-	return reply.Value
 }
 
 func (ck *Clerk) Put(key string, value string) {
@@ -71,17 +92,36 @@ func (ck *Clerk) Put(key string, value string) {
 		Key:         key,
 		Value:       value,
 	}
-	reply := PutReply{}
-	id := ck.leaderId
 	for {
-		ok := ck.servers[id].Call("KVServer.Put", &args, &reply)
-		if ok && reply.Status {
-			ck.leaderId = id
-			break
+		i := ck.leaderId
+		for {
+			reply := PutReply{}
+			ok := make(chan bool)
+			err := make(chan bool)
+			go func() {
+				if ck.servers[i].Call("KVServer.Put", &args, &reply) {
+					ok <- true
+				} else {
+					err <- true
+				}
+			}()
+			select {
+			case <-ok:
+				if reply.Status == success {
+					ck.leaderId = i
+					ck.nextSequenceNum++
+					return
+				}
+			case <-err:
+			case <-time.After(timeout):
+			}
+			i = (i + 1) % len(ck.servers)
+			if i == ck.leaderId {
+				break
+			}
 		}
-		id = rand.Intn(len(ck.servers))
+		time.Sleep(100 * time.Millisecond)
 	}
-	ck.nextSequenceNum++
 }
 
 func (ck *Clerk) Append(key string, value string) {
@@ -94,15 +134,34 @@ func (ck *Clerk) Append(key string, value string) {
 		Key:         key,
 		Value:       value,
 	}
-	reply := AppendReply{}
-	id := ck.leaderId
 	for {
-		ok := ck.servers[id].Call("KVServer.Append", &args, &reply)
-		if ok && reply.Status {
-			ck.leaderId = id
-			break
+		i := ck.leaderId
+		for {
+			reply := AppendReply{}
+			ok := make(chan bool)
+			err := make(chan bool)
+			go func() {
+				if ck.servers[i].Call("KVServer.Append", &args, &reply) {
+					ok <- true
+				} else {
+					err <- true
+				}
+			}()
+			select {
+			case <-ok:
+				if reply.Status == success {
+					ck.leaderId = i
+					ck.nextSequenceNum++
+					return
+				}
+			case <-err:
+			case <-time.After(timeout):
+			}
+			i = (i + 1) % len(ck.servers)
+			if i == ck.leaderId {
+				break
+			}
 		}
-		id = rand.Intn(len(ck.servers))
+		time.Sleep(100 * time.Millisecond)
 	}
-	ck.nextSequenceNum++
 }

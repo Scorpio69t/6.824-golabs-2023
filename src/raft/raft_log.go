@@ -11,10 +11,13 @@ type raftLog struct {
 	Entries           []entry
 }
 
-func (rl *raftLog) make(lastIncludedIndex int, lastIncludedTerm int) {
-	rl.LastIncludedIndex = lastIncludedIndex
-	rl.LastIncludedTerm = lastIncludedTerm
-	rl.Entries = []entry{}
+func (rl *raftLog) new(lastIncludedIndex int, lastIncludedTerm int) *raftLog {
+	newLog := raftLog{
+		LastIncludedIndex: lastIncludedIndex,
+		LastIncludedTerm:  lastIncludedTerm,
+		Entries:           []entry{},
+	}
+	return &newLog
 }
 
 func (rl *raftLog) lastLogIndex() int {

@@ -152,5 +152,5 @@ func (rf *Raft) startElection() {
 }
 
 func (rf *Raft) setNextElectionTime() {
-	rf.nextElection = time.Now().Add(time.Duration(350+rand.Intn(150)) * time.Millisecond)
+	rf.nextElection = time.Now().Add(time.Duration(250+rand.Intn(150)) * time.Millisecond)
 }

@@ -87,7 +87,10 @@ type Raft struct {
 	nextElection  time.Time
 	nextHeartbeat time.Time
 	nVotes        int
-	messages      []ApplyMsg
+
+	snapshot      []byte
+	snapshotIndex int
+	snapshotTerm  int
 }
 
 //
@@ -113,7 +116,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.applyCh = applyCh
 	rf.applyCond = sync.NewCond(&rf.mu)
 
-	rf.log.make(0, 0)
+	rf.log = *rf.log.new(0, 0)
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(rf.peers))
@@ -125,12 +128,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.setNextElectionTime()
 
 	// initialize from state persisted before a crash
+	rf.snapshot = nil
+	rf.snapshotIndex = 0
+	rf.snapshotTerm = 0
 	rf.restoreState()
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
-
-	go rf.messageListener()
+	go rf.applier()
 
 	return rf
 }
@@ -168,12 +173,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	defer rf.mu.Unlock()
 
 	if rf.state == leader {
-		DPrintf("%v %v receive a command\n", rf.state, rf.me)
 		term = rf.currentTerm
 		index = rf.log.lastLogIndex() + 1
 		isLeader = true
 		rf.log.append(entry{Term: term, Command: command})
 		rf.persistState()
+		DPrintf("%v %v receive a command index %v at term %v\n", rf.state, rf.me, index, term)
 		rf.broadcastHeartbeat()
 	}
 
@@ -212,17 +217,11 @@ func (rf *Raft) ticker() {
 		time.Sleep(50 * time.Millisecond)
 		rf.mu.Lock()
 		switch rf.state {
-		case follower:
+		case follower, candidate:
 			if time.Now().After(rf.nextElection) {
 				rf.state = candidate
 				rf.currentTerm++
 				rf.votedFor = rf.me
-				rf.persistState()
-				rf.startElection()
-			}
-		case candidate:
-			if time.Now().After(rf.nextElection) {
-				rf.currentTerm++
 				rf.persistState()
 				rf.startElection()
 			}
@@ -235,24 +234,33 @@ func (rf *Raft) ticker() {
 	}
 }
 
-func (rf *Raft) messageListener() {
+func (rf *Raft) applier() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	for !rf.killed() {
-		if len(rf.messages) > 0 {
-			ms := rf.messages
-			rf.messages = []ApplyMsg{}
-			rf.mu.Unlock()
-			for _, m := range ms {
-				rf.applyCh <- m
-				if m.CommandValid {
-					DPrintf("Server %v applied a command %v\n", rf.me, m.CommandIndex)
-				}
-				if m.SnapshotValid {
-					DPrintf("Server %v applied a snapshot with index %v term %v\n", rf.me, m.SnapshotIndex, m.SnapshotTerm)
-				}
+		if rf.snapshot != nil {
+			m := ApplyMsg{
+				SnapshotValid: true,
+				Snapshot:      rf.snapshot,
+				SnapshotIndex: rf.snapshotIndex,
+				SnapshotTerm:  rf.snapshotTerm,
 			}
+			rf.snapshot = nil
+			DPrintf("Server %v apply snapshot index %v term %v\n", rf.me, m.SnapshotIndex, m.SnapshotTerm)
+			rf.mu.Unlock()
+			rf.applyCh <- m
+			rf.mu.Lock()
+		} else if rf.lastApplied < rf.commitIndex {
+			m := ApplyMsg{
+				CommandValid: true,
+				Command:      rf.log.at(rf.lastApplied + 1).Command,
+				CommandIndex: rf.lastApplied + 1,
+			}
+			rf.lastApplied++
+			DPrintf("Server %v apply command index %v\n", rf.me, m.CommandIndex)
+			rf.mu.Unlock()
+			rf.applyCh <- m
 			rf.mu.Lock()
 		} else {
 			rf.applyCond.Wait()

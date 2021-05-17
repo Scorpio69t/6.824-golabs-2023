@@ -15,7 +15,7 @@ type InstallSnapshotReply struct {
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("Leader %v install snapshot to %v %v at term %v\n", args.LeaderId, rf.state, rf.me, rf.currentTerm)
+	DPrintf("Leader %v send snapshot to %v %v at term %v\n", args.LeaderId, rf.state, rf.me, rf.currentTerm)
 
 	reply.Term = rf.currentTerm
 
@@ -23,15 +23,20 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		return
 	}
 
+	if args.Term > rf.currentTerm {
+		rf.state = follower
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+		rf.persistState()
+	} else {
+		rf.state = follower
+	}
+
 	rf.setNextElectionTime()
 
-	msg := ApplyMsg{
-		SnapshotValid: true,
-		Snapshot:      args.Data,
-		SnapshotIndex: args.LastIncludedIndex,
-		SnapshotTerm:  args.LastIncludedTerm,
-	}
-	rf.messages = append(rf.messages, msg)
+	rf.snapshot = args.Data
+	rf.snapshotIndex = args.LastIncludedIndex
+	rf.snapshotTerm = args.LastIncludedTerm
 	rf.applyCond.Signal()
 }
 
@@ -43,12 +48,20 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	if reply.Term > rf.currentTerm {
+		rf.state = follower
+		rf.currentTerm = reply.Term
+		rf.votedFor = -1
+		rf.persistState()
+		rf.setNextElectionTime()
+		return
+	}
+
 	if rf.currentTerm != args.Term {
 		return
 	}
 
 	rf.nextIndex[server] = args.LastIncludedIndex + 1
-	rf.matchIndex[server] = args.LastIncludedIndex
 }
 
 //
@@ -60,13 +73,16 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	if lastIncludedTerm < rf.log.LastIncludedTerm ||
-		(lastIncludedTerm == rf.log.LastIncludedTerm && lastIncludedIndex <= rf.log.LastIncludedIndex) {
+	if lastIncludedIndex <= rf.commitIndex {
 		return false
 	}
 
-	DPrintf("Server %v condInstalled snapshot with lastIncludedTerm %v lastIncludedIndex %v\n", rf.me, lastIncludedTerm, lastIncludedIndex)
-	rf.log.make(lastIncludedIndex, lastIncludedTerm)
+	DPrintf("Server %v condInstall snapshot with lastIncludedTerm %v lastIncludedIndex %v\n", rf.me, lastIncludedTerm, lastIncludedIndex)
+	if lastIncludedIndex <= rf.log.lastLogIndex() && lastIncludedTerm == rf.log.termOf(lastIncludedIndex) {
+		rf.log = *rf.log.slice(lastIncludedIndex+1, -1)
+	} else {
+		rf.log = *rf.log.new(lastIncludedIndex, lastIncludedTerm)
+	}
 	rf.persistStateAndSnapshot(snapshot)
 	rf.lastApplied = lastIncludedIndex
 	rf.commitIndex = lastIncludedIndex
@@ -83,6 +99,9 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	if index <= rf.log.LastIncludedIndex {
+		return
+	}
 	DPrintf("%v %v take a snapshot at index %v\n", rf.state, rf.me, index)
 	rf.log = *rf.log.slice(index+1, -1)
 	rf.persistStateAndSnapshot(snapshot)
