@@ -5,43 +5,69 @@ package shardctrler
 //
 
 import (
-	"crypto/rand"
-	"math/big"
+	"math/rand"
+	"sync"
 	"time"
 
 	"6.824/labrpc"
 )
 
+const timeout = 1000 * time.Millisecond
+
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// Your data here.
-}
-
-func nrand() int64 {
-	max := big.NewInt(int64(1) << 62)
-	bigx, _ := rand.Int(rand.Reader, max)
-	x := bigx.Int64()
-	return x
+	mu              sync.Mutex
+	id              int64
+	leaderId        int
+	nextSequenceNum int64
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// Your code here.
+	ck.id = nrand()
+	ck.leaderId = rand.Intn(len(ck.servers))
+	ck.nextSequenceNum = 1
 	return ck
 }
 
 func (ck *Clerk) Query(num int) Config {
-	args := &QueryArgs{}
-	// Your code here.
-	args.Num = num
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+
+	args := QueryArgs{
+		ClientId:    ck.id,
+		SequenceNum: ck.nextSequenceNum,
+		ConfigNum:   num,
+	}
 	for {
-		// try each known server.
-		for _, srv := range ck.servers {
-			var reply QueryReply
-			ok := srv.Call("ShardCtrler.Query", args, &reply)
-			if ok && reply.WrongLeader == false {
-				return reply.Config
+		i := ck.leaderId
+		for {
+			reply := QueryReply{}
+			ok := make(chan bool)
+			err := make(chan bool)
+			go func() {
+				if ck.servers[i].Call("ShardCtrler.Query", &args, &reply) {
+					ok <- true
+				} else {
+					err <- true
+				}
+			}()
+			select {
+			case <-ok:
+				if reply.Status == success {
+					ck.leaderId = i
+					ck.nextSequenceNum++
+					return reply.Config
+				}
+			case <-err:
+			case <-time.After(timeout):
+			}
+			i = (i + 1) % len(ck.servers)
+			if i == ck.leaderId {
+				break
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -49,17 +75,40 @@ func (ck *Clerk) Query(num int) Config {
 }
 
 func (ck *Clerk) Join(servers map[int][]string) {
-	args := &JoinArgs{}
-	// Your code here.
-	args.Servers = servers
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
 
+	args := JoinArgs{
+		ClientId:    ck.id,
+		SequenceNum: ck.nextSequenceNum,
+		Servers:     servers,
+	}
 	for {
-		// try each known server.
-		for _, srv := range ck.servers {
-			var reply JoinReply
-			ok := srv.Call("ShardCtrler.Join", args, &reply)
-			if ok && reply.WrongLeader == false {
-				return
+		i := ck.leaderId
+		for {
+			reply := JoinReply{}
+			ok := make(chan bool)
+			err := make(chan bool)
+			go func() {
+				if ck.servers[i].Call("ShardCtrler.Join", &args, &reply) {
+					ok <- true
+				} else {
+					err <- true
+				}
+			}()
+			select {
+			case <-ok:
+				if reply.Status == success {
+					ck.leaderId = i
+					ck.nextSequenceNum++
+					return
+				}
+			case <-err:
+			case <-time.After(timeout):
+			}
+			i = (i + 1) % len(ck.servers)
+			if i == ck.leaderId {
+				break
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -67,17 +116,40 @@ func (ck *Clerk) Join(servers map[int][]string) {
 }
 
 func (ck *Clerk) Leave(gids []int) {
-	args := &LeaveArgs{}
-	// Your code here.
-	args.GIDs = gids
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
 
+	args := LeaveArgs{
+		ClientId:    ck.id,
+		SequenceNum: ck.nextSequenceNum,
+		Gids:        gids,
+	}
 	for {
-		// try each known server.
-		for _, srv := range ck.servers {
-			var reply LeaveReply
-			ok := srv.Call("ShardCtrler.Leave", args, &reply)
-			if ok && reply.WrongLeader == false {
-				return
+		i := ck.leaderId
+		for {
+			reply := LeaveReply{}
+			ok := make(chan bool)
+			err := make(chan bool)
+			go func() {
+				if ck.servers[i].Call("ShardCtrler.Leave", &args, &reply) {
+					ok <- true
+				} else {
+					err <- true
+				}
+			}()
+			select {
+			case <-ok:
+				if reply.Status == success {
+					ck.leaderId = i
+					ck.nextSequenceNum++
+					return
+				}
+			case <-err:
+			case <-time.After(timeout):
+			}
+			i = (i + 1) % len(ck.servers)
+			if i == ck.leaderId {
+				break
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -85,18 +157,41 @@ func (ck *Clerk) Leave(gids []int) {
 }
 
 func (ck *Clerk) Move(shard int, gid int) {
-	args := &MoveArgs{}
-	// Your code here.
-	args.Shard = shard
-	args.GID = gid
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
 
+	args := MoveArgs{
+		ClientId:    ck.id,
+		SequenceNum: ck.nextSequenceNum,
+		Shard:       shard,
+		Gid:         gid,
+	}
 	for {
-		// try each known server.
-		for _, srv := range ck.servers {
-			var reply MoveReply
-			ok := srv.Call("ShardCtrler.Move", args, &reply)
-			if ok && reply.WrongLeader == false {
-				return
+		i := ck.leaderId
+		for {
+			reply := MoveReply{}
+			ok := make(chan bool)
+			err := make(chan bool)
+			go func() {
+				if ck.servers[i].Call("ShardCtrler.Move", &args, &reply) {
+					ok <- true
+				} else {
+					err <- true
+				}
+			}()
+			select {
+			case <-ok:
+				if reply.Status == success {
+					ck.leaderId = i
+					ck.nextSequenceNum++
+					return
+				}
+			case <-err:
+			case <-time.After(timeout):
+			}
+			i = (i + 1) % len(ck.servers)
+			if i == ck.leaderId {
+				break
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
