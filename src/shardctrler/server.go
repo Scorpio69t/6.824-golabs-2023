@@ -21,17 +21,17 @@ const (
 
 type Op struct {
 	// Your data here.
-	ClientId    int64
-	SequenceNum int64
-	Type        opType
+	Cid  int64
+	Seq  int64
+	Type opType
 
 	// For join op.
 	Servers map[int][]string
 	// For leave op.
 	Gids []int
 	// For move op.
-	Shard int
-	Gid   int
+	Sid int
+	Gid int
 	// For query op.
 	ConfigNum int
 	Config    Config
@@ -56,8 +56,8 @@ type ShardCtrler struct {
 	dead    int32
 
 	// Your data here.
-	lastSequenceNums map[int64]int64
-	waitChs          map[int]chan Op
+	lastSeqs map[int64]int64
+	waitChs  map[int]chan Op
 
 	configs []Config // indexed by config num
 }
@@ -99,7 +99,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	labgob.Register(Op{})
 	sc.applyCh = make(chan raft.ApplyMsg)
 	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
-	sc.lastSequenceNums = make(map[int64]int64)
+	sc.lastSeqs = make(map[int64]int64)
 	sc.waitChs = make(map[int]chan Op)
 
 	// Your code here.
@@ -118,7 +118,7 @@ func (sc *ShardCtrler) reader() {
 			}
 
 			sc.mu.Lock()
-			if op.SequenceNum > sc.lastSequenceNums[op.ClientId] {
+			if op.Seq > sc.lastSeqs[op.Cid] {
 				switch op.Type {
 				case joinOp:
 					sc.join(&op)
@@ -127,13 +127,14 @@ func (sc *ShardCtrler) reader() {
 				case moveOp:
 					sc.move(&op)
 				}
-				sc.lastSequenceNums[op.ClientId] = op.SequenceNum
+				sc.lastSeqs[op.Cid] = op.Seq
 			}
+			ch, ok := sc.waitChs[cmd.CommandIndex]
+			sc.mu.Unlock()
 
-			if ch, ok := sc.waitChs[cmd.CommandIndex]; ok {
+			if ok {
 				ch <- op
 			}
-			sc.mu.Unlock()
 		}
 	}
 }
@@ -155,8 +156,8 @@ func (sc *ShardCtrler) join(op *Op) {
 	newGroup := make(map[int][]string)
 	m := make(map[int][]int)
 
-	for shard, gid := range oldShards {
-		m[gid] = append(m[gid], shard)
+	for sid, gid := range oldShards {
+		m[gid] = append(m[gid], sid)
 	}
 
 	for gid, names := range oldGroup {
@@ -201,9 +202,9 @@ func (sc *ShardCtrler) join(op *Op) {
 		unassigned = unassigned[1:]
 	}
 
-	for gid, shards := range m {
-		for _, shard := range shards {
-			newShards[shard] = gid
+	for gid, sids := range m {
+		for _, sid := range sids {
+			newShards[sid] = gid
 		}
 	}
 
@@ -223,8 +224,8 @@ func (sc *ShardCtrler) leave(op *Op) {
 	newGroup := make(map[int][]string)
 	m := make(map[int][]int)
 
-	for shard, gid := range oldShards {
-		m[gid] = append(m[gid], shard)
+	for sid, gid := range oldShards {
+		m[gid] = append(m[gid], sid)
 	}
 
 	for gid, names := range oldGroup {
@@ -272,9 +273,9 @@ func (sc *ShardCtrler) leave(op *Op) {
 		unassigned = unassigned[1:]
 	}
 
-	for gid, shards := range m {
-		for _, shard := range shards {
-			newShards[shard] = gid
+	for gid, sids := range m {
+		for _, sid := range sids {
+			newShards[sid] = gid
 		}
 	}
 
@@ -292,15 +293,15 @@ func (sc *ShardCtrler) move(op *Op) {
 	oldGroup := sc.configs[lastNum].Groups
 
 	newShards := [NShards]int{}
-	for shard, gid := range oldShards {
-		newShards[shard] = gid
+	for sid, gid := range oldShards {
+		newShards[sid] = gid
 	}
 	newGroup := make(map[int][]string)
 	for gid, names := range oldGroup {
 		newGroup[gid] = names
 	}
 
-	newShards[op.Shard] = op.Gid
+	newShards[op.Sid] = op.Gid
 
 	newConfig := Config{
 		Num:    lastNum + 1,

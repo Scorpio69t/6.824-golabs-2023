@@ -17,29 +17,27 @@ package shardctrler
 // You will need to add fields to the RPC argument structs.
 //
 
-type status int
-
 const (
 	success = iota
 	wrongLeader
 )
 
 type JoinArgs struct {
-	ClientId    int64
-	SequenceNum int64
-	Servers     map[int][]string // new GID -> servers mappings
+	Cid     int64
+	Seqs    int64
+	Servers map[int][]string // new GID -> servers mappings
 }
 
 type JoinReply struct {
-	Status status
+	Status int
 }
 
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	// Your code here.
 	sc.mu.Lock()
-	sequenceNum, ok := sc.lastSequenceNums[args.ClientId]
+	seq, ok := sc.lastSeqs[args.Cid]
 	sc.mu.Unlock()
-	if ok && args.SequenceNum <= sequenceNum {
+	if ok && args.Seqs <= seq {
 		reply.Status = success
 		return
 	}
@@ -47,10 +45,10 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	reply.Status = wrongLeader
 
 	op := Op{
-		Type:        joinOp,
-		ClientId:    args.ClientId,
-		SequenceNum: args.SequenceNum,
-		Servers:     args.Servers,
+		Type:    joinOp,
+		Cid:     args.Cid,
+		Seq:     args.Seqs,
+		Servers: args.Servers,
 	}
 	index, _, isLeader := sc.rf.Start(op)
 	if !isLeader {
@@ -62,9 +60,9 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	sc.waitChs[index] = ch
 	sc.mu.Unlock()
 	o := <-ch
-	if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
+	if o.Cid == args.Cid && o.Seq == args.Seqs {
 		reply.Status = success
-		DPrintf("ShardCtrler join servers %v clientId %v sequenceNum %v\n", args.Servers, args.ClientId, args.SequenceNum)
+		DPrintf("ShardCtrler join servers %v clientId %v seq %v\n", args.Servers, args.Cid, args.Seqs)
 	}
 	sc.mu.Lock()
 	delete(sc.waitChs, index)
@@ -72,21 +70,21 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 }
 
 type LeaveArgs struct {
-	ClientId    int64
-	SequenceNum int64
-	Gids        []int
+	Cid  int64
+	Seq  int64
+	Gids []int
 }
 
 type LeaveReply struct {
-	Status status
+	Status int
 }
 
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	// Your code here.
 	sc.mu.Lock()
-	sequenceNum, ok := sc.lastSequenceNums[args.ClientId]
+	seq, ok := sc.lastSeqs[args.Cid]
 	sc.mu.Unlock()
-	if ok && args.SequenceNum <= sequenceNum {
+	if ok && args.Seq <= seq {
 		reply.Status = success
 		return
 	}
@@ -94,10 +92,10 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	reply.Status = wrongLeader
 
 	op := Op{
-		Type:        leaveOp,
-		ClientId:    args.ClientId,
-		SequenceNum: args.SequenceNum,
-		Gids:        args.Gids,
+		Type: leaveOp,
+		Cid:  args.Cid,
+		Seq:  args.Seq,
+		Gids: args.Gids,
 	}
 	index, _, isLeader := sc.rf.Start(op)
 	if !isLeader {
@@ -109,9 +107,9 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	sc.waitChs[index] = ch
 	sc.mu.Unlock()
 	o := <-ch
-	if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
+	if o.Cid == args.Cid && o.Seq == args.Seq {
 		reply.Status = success
-		DPrintf("ShardCtrler leave gids %v clientId %v sequenceNum %v\n", args.Gids, args.ClientId, args.SequenceNum)
+		DPrintf("ShardCtrler leave gids %v clientId %v seq %v\n", args.Gids, args.Cid, args.Seq)
 	}
 	sc.mu.Lock()
 	delete(sc.waitChs, index)
@@ -119,22 +117,22 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 }
 
 type MoveArgs struct {
-	ClientId    int64
-	SequenceNum int64
-	Shard       int
-	Gid         int
+	Cid int64
+	Seq int64
+	Sid int
+	Gid int
 }
 
 type MoveReply struct {
-	Status status
+	Status int
 }
 
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	// Your code here.
 	sc.mu.Lock()
-	sequenceNum, ok := sc.lastSequenceNums[args.ClientId]
+	sequenceNum, ok := sc.lastSeqs[args.Cid]
 	sc.mu.Unlock()
-	if ok && args.SequenceNum <= sequenceNum {
+	if ok && args.Seq <= sequenceNum {
 		reply.Status = success
 		return
 	}
@@ -142,11 +140,11 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	reply.Status = wrongLeader
 
 	op := Op{
-		Type:        moveOp,
-		ClientId:    args.ClientId,
-		SequenceNum: args.SequenceNum,
-		Shard:       args.Shard,
-		Gid:         args.Gid,
+		Type: moveOp,
+		Cid:  args.Cid,
+		Seq:  args.Seq,
+		Sid:  args.Sid,
+		Gid:  args.Gid,
 	}
 	index, _, isLeader := sc.rf.Start(op)
 	if !isLeader {
@@ -158,9 +156,9 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	sc.waitChs[index] = ch
 	sc.mu.Unlock()
 	o := <-ch
-	if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
+	if o.Cid == args.Cid && o.Seq == args.Seq {
 		reply.Status = success
-		DPrintf("ShardCtrler move shard %v to gid %v clientId %v sequenceNum %v\n", args.Shard, args.Gid, args.ClientId, args.SequenceNum)
+		DPrintf("ShardCtrler move shard %v to gid %v clientId %v seq %v\n", args.Sid, args.Gid, args.Cid, args.Seq)
 	}
 	sc.mu.Lock()
 	delete(sc.waitChs, index)
@@ -168,13 +166,13 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 }
 
 type QueryArgs struct {
-	ClientId    int64
-	SequenceNum int64
-	ConfigNum   int // desired config number
+	Cid       int64
+	Seq       int64
+	ConfigNum int // desired config number
 }
 
 type QueryReply struct {
-	Status status
+	Status int
 	Config Config
 }
 
@@ -183,10 +181,10 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	reply.Status = wrongLeader
 
 	op := Op{
-		Type:        queryOp,
-		ClientId:    args.ClientId,
-		SequenceNum: args.SequenceNum,
-		ConfigNum:   args.ConfigNum,
+		Type:      queryOp,
+		Cid:       args.Cid,
+		Seq:       args.Seq,
+		ConfigNum: args.ConfigNum,
 	}
 	index, _, isLeader := sc.rf.Start(op)
 	if !isLeader {
@@ -198,7 +196,7 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	sc.waitChs[index] = ch
 	sc.mu.Unlock()
 	o := <-ch
-	if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
+	if o.Cid == args.Cid && o.Seq == args.Seq {
 		reply.Status = success
 		reply.Config = o.Config
 	}

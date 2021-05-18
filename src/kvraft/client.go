@@ -13,10 +13,10 @@ const timeout = 1000 * time.Millisecond
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
-	mu              sync.Mutex
-	id              int64
-	leaderId        int
-	nextSequenceNum int64
+	mu       sync.Mutex
+	id       int64
+	leaderId int
+	nextSeq  int64
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
@@ -25,7 +25,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	// You'll have to add code here.
 	ck.id = nrand()
 	ck.leaderId = rand.Intn(len(ck.servers))
-	ck.nextSequenceNum = 1
+	ck.nextSeq = 1
 	return ck
 }
 
@@ -46,9 +46,9 @@ func (ck *Clerk) Get(key string) string {
 	defer ck.mu.Unlock()
 
 	args := GetArgs{
-		ClientId:    ck.id,
-		SequenceNum: ck.nextSequenceNum,
-		Key:         key,
+		Cid: ck.id,
+		Seq: ck.nextSeq,
+		Key: key,
 	}
 	for {
 		i := ck.leaderId
@@ -67,7 +67,7 @@ func (ck *Clerk) Get(key string) string {
 			case <-ok:
 				if reply.Status == success {
 					ck.leaderId = i
-					ck.nextSequenceNum++
+					ck.nextSeq++
 					return reply.Value
 				}
 			case <-err:
@@ -87,10 +87,10 @@ func (ck *Clerk) Put(key string, value string) {
 	defer ck.mu.Unlock()
 
 	args := PutArgs{
-		ClientId:    ck.id,
-		SequenceNum: ck.nextSequenceNum,
-		Key:         key,
-		Value:       value,
+		Cid:   ck.id,
+		Seq:   ck.nextSeq,
+		Key:   key,
+		Value: value,
 	}
 	for {
 		i := ck.leaderId
@@ -109,7 +109,7 @@ func (ck *Clerk) Put(key string, value string) {
 			case <-ok:
 				if reply.Status == success {
 					ck.leaderId = i
-					ck.nextSequenceNum++
+					ck.nextSeq++
 					return
 				}
 			case <-err:
@@ -129,10 +129,10 @@ func (ck *Clerk) Append(key string, value string) {
 	defer ck.mu.Unlock()
 
 	args := AppendArgs{
-		ClientId:    ck.id,
-		SequenceNum: ck.nextSequenceNum,
-		Key:         key,
-		Value:       value,
+		Cid:   ck.id,
+		Seq:   ck.nextSeq,
+		Key:   key,
+		Value: value,
 	}
 	for {
 		i := ck.leaderId
@@ -151,7 +151,7 @@ func (ck *Clerk) Append(key string, value string) {
 			case <-ok:
 				if reply.Status == success {
 					ck.leaderId = i
-					ck.nextSequenceNum++
+					ck.nextSeq++
 					return
 				}
 			case <-err:

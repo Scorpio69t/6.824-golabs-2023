@@ -23,11 +23,11 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	ClientId    int64
-	SequenceNum int64
-	Type        opType
-	Key         string
-	Value       string
+	Cid   int64 // Client id
+	Seq   int64 // Sequence number
+	Type  opType
+	Key   string
+	Value string
 }
 
 type KVServer struct {
@@ -40,9 +40,9 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	db               map[string]string
-	lastSequenceNums map[int64]int64
-	waitChs          map[int]chan Op
+	data     map[string]string
+	lastSeqs map[int64]int64
+	waitChs  map[int]chan Op
 
 	persister *raft.Persister
 }
@@ -98,8 +98,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
-	kv.db = make(map[string]string)
-	kv.lastSequenceNums = make(map[int64]int64)
+	kv.data = make(map[string]string)
+	kv.lastSeqs = make(map[int64]int64)
 	kv.waitChs = make(map[int]chan Op)
 	kv.restore()
 
@@ -113,23 +113,31 @@ func (kv *KVServer) reader() {
 		cmd := <-kv.applyCh
 		if cmd.CommandValid {
 			op := cmd.Command.(Op)
-			kv.get(&op)
+			if op.Type == getOp {
+				op.Value = kv.data[op.Key]
+			}
 
 			kv.mu.Lock()
-			if op.SequenceNum > kv.lastSequenceNums[op.ClientId] {
+			if op.Seq > kv.lastSeqs[op.Cid] {
 				switch op.Type {
 				case putOp:
-					kv.put(&op)
+					if op.Value == "" {
+						delete(kv.data, op.Key)
+					} else {
+						kv.data[op.Key] = op.Value
+					}
 				case appendOp:
-					kv.append(&op)
+					kv.data[op.Key] = kv.data[op.Key] + op.Value
 				}
-				kv.lastSequenceNums[op.ClientId] = op.SequenceNum
-			}
 
-			if ch, ok := kv.waitChs[cmd.CommandIndex]; ok {
+				kv.lastSeqs[op.Cid] = op.Seq
+			}
+			ch, ok := kv.waitChs[cmd.CommandIndex]
+			kv.mu.Unlock()
+
+			if ok {
 				ch <- op
 			}
-			kv.mu.Unlock()
 
 			if kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate {
 				kv.rf.Snapshot(cmd.CommandIndex, kv.serialize())
@@ -148,21 +156,21 @@ func (kv *KVServer) reader() {
 func (kv *KVServer) serialize() []byte {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	e.Encode(kv.db)
-	e.Encode(kv.lastSequenceNums)
+	e.Encode(kv.data)
+	e.Encode(kv.lastSeqs)
 	return w.Bytes()
 }
 
 func (kv *KVServer) switchTo(snapshot []byte) {
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
-	var db map[string]string
-	var sequenceNums map[int64]int64
-	if d.Decode(&db) != nil || d.Decode(&sequenceNums) != nil {
+	data := make(map[string]string)
+	seqs := make(map[int64]int64)
+	if d.Decode(&data) != nil || d.Decode(&seqs) != nil {
 		log.Fatalln("KVServer: cannot deserialize")
 	}
-	kv.db = db
-	kv.lastSequenceNums = sequenceNums
+	kv.data = data
+	kv.lastSeqs = seqs
 }
 
 func (kv *KVServer) restore() {
@@ -171,34 +179,4 @@ func (kv *KVServer) restore() {
 		return
 	}
 	kv.switchTo(snapshot)
-}
-
-func (kv *KVServer) get(op *Op) {
-	if op.Type == getOp {
-		val, ok := kv.db[op.Key]
-		if ok {
-			op.Value = val
-		} else {
-			op.Value = ""
-		}
-	}
-}
-
-func (kv *KVServer) put(op *Op) {
-	if op.Value == "" {
-		delete(kv.db, op.Key)
-	} else {
-		kv.db[op.Key] = op.Value
-	}
-}
-
-func (kv *KVServer) append(op *Op) {
-	if op.Value != "" {
-		val, ok := kv.db[op.Key]
-		if ok {
-			kv.db[op.Key] = val + op.Value
-		} else {
-			kv.db[op.Key] = op.Value
-		}
-	}
 }

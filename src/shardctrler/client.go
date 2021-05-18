@@ -17,10 +17,10 @@ const timeout = 1000 * time.Millisecond
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// Your data here.
-	mu              sync.Mutex
-	id              int64
-	leaderId        int
-	nextSequenceNum int64
+	mu       sync.Mutex
+	id       int64
+	leaderId int
+	nextSeq  int64
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
@@ -29,18 +29,18 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	// Your code here.
 	ck.id = nrand()
 	ck.leaderId = rand.Intn(len(ck.servers))
-	ck.nextSequenceNum = 1
+	ck.nextSeq = 1
 	return ck
 }
 
-func (ck *Clerk) Query(num int) Config {
+func (ck *Clerk) Query(configNum int) Config {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
 
 	args := QueryArgs{
-		ClientId:    ck.id,
-		SequenceNum: ck.nextSequenceNum,
-		ConfigNum:   num,
+		Cid:       ck.id,
+		Seq:       ck.nextSeq,
+		ConfigNum: configNum,
 	}
 	for {
 		i := ck.leaderId
@@ -59,7 +59,7 @@ func (ck *Clerk) Query(num int) Config {
 			case <-ok:
 				if reply.Status == success {
 					ck.leaderId = i
-					ck.nextSequenceNum++
+					ck.nextSeq++
 					return reply.Config
 				}
 			case <-err:
@@ -79,9 +79,9 @@ func (ck *Clerk) Join(servers map[int][]string) {
 	defer ck.mu.Unlock()
 
 	args := JoinArgs{
-		ClientId:    ck.id,
-		SequenceNum: ck.nextSequenceNum,
-		Servers:     servers,
+		Cid:     ck.id,
+		Seqs:    ck.nextSeq,
+		Servers: servers,
 	}
 	for {
 		i := ck.leaderId
@@ -100,7 +100,7 @@ func (ck *Clerk) Join(servers map[int][]string) {
 			case <-ok:
 				if reply.Status == success {
 					ck.leaderId = i
-					ck.nextSequenceNum++
+					ck.nextSeq++
 					return
 				}
 			case <-err:
@@ -120,9 +120,9 @@ func (ck *Clerk) Leave(gids []int) {
 	defer ck.mu.Unlock()
 
 	args := LeaveArgs{
-		ClientId:    ck.id,
-		SequenceNum: ck.nextSequenceNum,
-		Gids:        gids,
+		Cid:  ck.id,
+		Seq:  ck.nextSeq,
+		Gids: gids,
 	}
 	for {
 		i := ck.leaderId
@@ -141,7 +141,7 @@ func (ck *Clerk) Leave(gids []int) {
 			case <-ok:
 				if reply.Status == success {
 					ck.leaderId = i
-					ck.nextSequenceNum++
+					ck.nextSeq++
 					return
 				}
 			case <-err:
@@ -156,15 +156,15 @@ func (ck *Clerk) Leave(gids []int) {
 	}
 }
 
-func (ck *Clerk) Move(shard int, gid int) {
+func (ck *Clerk) Move(sid int, gid int) {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
 
 	args := MoveArgs{
-		ClientId:    ck.id,
-		SequenceNum: ck.nextSequenceNum,
-		Shard:       shard,
-		Gid:         gid,
+		Cid: ck.id,
+		Seq: ck.nextSeq,
+		Sid: sid,
+		Gid: gid,
 	}
 	for {
 		i := ck.leaderId
@@ -183,7 +183,7 @@ func (ck *Clerk) Move(shard int, gid int) {
 			case <-ok:
 				if reply.Status == success {
 					ck.leaderId = i
-					ck.nextSequenceNum++
+					ck.nextSeq++
 					return
 				}
 			case <-err:

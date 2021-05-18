@@ -1,55 +1,52 @@
 package kvraft
 
-type status int
-
 const (
 	success = iota
 	wrongLeader
 )
 
 type PutArgs struct {
-	ClientId    int64
-	SequenceNum int64
-	Key         string
-	Value       string
+	Cid   int64
+	Seq   int64
+	Key   string
+	Value string
 }
 
 type PutReply struct {
-	Status status
+	Status int
 }
 
 type AppendArgs struct {
-	ClientId    int64
-	SequenceNum int64
-	Key         string
-	Value       string
+	Cid   int64
+	Seq   int64
+	Key   string
+	Value string
 }
 
 type AppendReply struct {
-	Status status
+	Status int
 }
 
 type GetArgs struct {
-	ClientId    int64
-	SequenceNum int64
-	Key         string
+	Cid int64
+	Seq int64
+	Key string
 }
 
 type GetReply struct {
-	Status status
+	Status int
 	Value  string
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	DPrintf("Client %v wanna get key %v from server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
 	reply.Status = wrongLeader
 
 	op := Op{
-		ClientId:    args.ClientId,
-		SequenceNum: args.SequenceNum,
-		Type:        getOp,
-		Key:         args.Key,
+		Cid:  args.Cid,
+		Seq:  args.Seq,
+		Type: getOp,
+		Key:  args.Key,
 	}
 	index, _, isLeader := kv.rf.Start(op)
 	if !isLeader {
@@ -61,35 +58,35 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.waitChs[index] = ch
 	kv.mu.Unlock()
 	o := <-ch
-	if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
-		DPrintf("Client %v get key %v from server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
+	if o.Cid == args.Cid && o.Seq == args.Seq {
+		DPrintf("Client %v get key %v from server %v seq %v\n", args.Cid, args.Key, kv.me, args.Seq)
 		reply.Status = success
 		reply.Value = o.Value
+	} else {
+		DPrintf("Client %v fail to get key %v from server %v seq %v\n", args.Cid, args.Key, kv.me, args.Seq)
 	}
 	kv.mu.Lock()
 	delete(kv.waitChs, index)
 	kv.mu.Unlock()
-	DPrintf("Client %v fail to get key %v from server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
 }
 
 func (kv *KVServer) Put(args *PutArgs, reply *PutReply) {
 	// Your code here.
 	kv.mu.Lock()
-	sequenceNum, ok := kv.lastSequenceNums[args.ClientId]
+	seq := kv.lastSeqs[args.Cid]
 	kv.mu.Unlock()
-	if ok && args.SequenceNum <= sequenceNum {
+	if args.Seq <= seq {
 		reply.Status = success
 		return
 	}
-	DPrintf("Client %v wanna put key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
 	reply.Status = wrongLeader
 
 	op := Op{
-		ClientId:    args.ClientId,
-		SequenceNum: args.SequenceNum,
-		Type:        putOp,
-		Key:         args.Key,
-		Value:       args.Value,
+		Cid:   args.Cid,
+		Seq:   args.Seq,
+		Type:  putOp,
+		Key:   args.Key,
+		Value: args.Value,
 	}
 	index, _, isLeader := kv.rf.Start(op)
 	if !isLeader {
@@ -101,34 +98,34 @@ func (kv *KVServer) Put(args *PutArgs, reply *PutReply) {
 	kv.waitChs[index] = ch
 	kv.mu.Unlock()
 	o := <-ch
-	if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
-		DPrintf("Client %v put key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
+	if o.Cid == args.Cid && o.Seq == args.Seq {
+		DPrintf("Client %v put key %v to server %v seq %v\n", args.Cid, args.Key, kv.me, args.Seq)
 		reply.Status = success
+	} else {
+		DPrintf("Client %v fail to put key %v to server %v seq %v\n", args.Cid, args.Key, kv.me, args.Seq)
 	}
 	kv.mu.Lock()
 	delete(kv.waitChs, index)
 	kv.mu.Unlock()
-	DPrintf("Client %v fail to put key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
 }
 
 func (kv *KVServer) Append(args *AppendArgs, reply *AppendReply) {
 	// Your code here.
 	kv.mu.Lock()
-	sequenceNum, ok := kv.lastSequenceNums[args.ClientId]
+	seq := kv.lastSeqs[args.Cid]
 	kv.mu.Unlock()
-	if ok && args.SequenceNum <= sequenceNum {
+	if args.Seq <= seq {
 		reply.Status = success
 		return
 	}
-	DPrintf("Client %v wanna append key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
 	reply.Status = wrongLeader
 
 	op := Op{
-		ClientId:    args.ClientId,
-		SequenceNum: args.SequenceNum,
-		Type:        appendOp,
-		Key:         args.Key,
-		Value:       args.Value,
+		Cid:   args.Cid,
+		Seq:   args.Seq,
+		Type:  appendOp,
+		Key:   args.Key,
+		Value: args.Value,
 	}
 	index, _, isLeader := kv.rf.Start(op)
 	if !isLeader {
@@ -140,12 +137,13 @@ func (kv *KVServer) Append(args *AppendArgs, reply *AppendReply) {
 	kv.waitChs[index] = ch
 	kv.mu.Unlock()
 	o := <-ch
-	if o.ClientId == args.ClientId && o.SequenceNum == args.SequenceNum {
-		DPrintf("Client %v append key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
+	if o.Cid == args.Cid && o.Seq == args.Seq {
+		DPrintf("Client %v append key %v to server %v seq %v\n", args.Cid, args.Key, kv.me, args.Seq)
 		reply.Status = success
+	} else {
+		DPrintf("Client %v fail to append key %v to server %v seq %v\n", args.Cid, args.Key, kv.me, args.Seq)
 	}
 	kv.mu.Lock()
 	delete(kv.waitChs, index)
 	kv.mu.Unlock()
-	DPrintf("Client %v fail to append key %v to server %v seq %v\n", args.ClientId, args.Key, kv.me, args.SequenceNum)
 }
